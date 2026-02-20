@@ -131,7 +131,7 @@ for name in runs:
 # ============================================================
 # PLOT: 3×2 layout
 # ============================================================
-fig, axes = plt.subplots(3, 2, figsize=(16, 18))
+fig, axes = plt.subplots(4, 2, figsize=(16, 24))
 fig.suptitle('HAMi gpucores: Original vs AIMD×3 Patch\n'
              'k3s, gpu_burn 30s, RTX 4080 SUPER (2 runs each)',
              fontsize=14, fontweight='bold')
@@ -223,8 +223,42 @@ ax.legend(loc='upper right', fontsize=9)
 ax.set_ylim(0, 110)
 ax.grid(True, alpha=0.3)
 
-# --- Panel 5: MAE comparison ---
+# --- Panel 5: Raw nvidia-smi SM utilization ---
 ax = axes[2, 0]
+ax.set_title(f"nvidia-smi SM Utilization at gpucores={sm}")
+for name, smi_list in smi_data.items():
+    smi = smi_list[0][sm]
+    if smi:
+        smi_arr = np.array(smi)
+        ax.plot(smi_arr[:, 0], smi_arr[:, 1], color=colors[name], alpha=0.6,
+                linewidth=0.8, label=name)
+ax.axhline(sm, color='k', linestyle='--', alpha=0.5, label=f'Target {sm}%')
+ax.set_xlabel("Time (s)")
+ax.set_ylabel("SM Utilization (%)")
+ax.legend(loc='upper right', fontsize=9)
+ax.set_ylim(0, 110)
+ax.grid(True, alpha=0.3)
+
+# --- Panel 6: Cumulative throughput ---
+ax = axes[2, 1]
+ax.set_title(f"Cumulative Throughput at gpucores={sm}")
+for name, smi_list in smi_data.items():
+    run_idx = 1 if len(runs[name]) > 1 else 0
+    d = runs[name][run_idx][sm]
+    if d[0]:
+        arr = np.array(d[0])
+        cum_pct = arr[:, 1] / baseline * 100
+        final_pct = d[1] / baseline * 100
+        ax.plot(arr[:, 0], cum_pct, color=colors[name], linewidth=2,
+                label=f'{name} ({final_pct:.1f}%)')
+ax.axhline(sm, color='k', linestyle='--', alpha=0.5)
+ax.set_xlabel("Time (s)")
+ax.set_ylabel("Cumulative (% of baseline)")
+ax.legend(loc='upper left', fontsize=9)
+ax.grid(True, alpha=0.3)
+
+# --- Panel 7: MAE comparison ---
+ax = axes[3, 0]
 ax.set_title("Mean Absolute Error (MAE)")
 mae_data = []
 for name in runs:
@@ -245,8 +279,8 @@ for bar, mae in zip(bars, maes):
 ax.set_xlim(0, max(maes) * 1.4)
 ax.grid(True, alpha=0.3, axis='x')
 
-# --- Panel 6: Data table ---
-ax = axes[2, 1]
+# --- Panel 8: Data table ---
+ax = axes[3, 1]
 ax.set_title("Raw Data (2 runs each)")
 ax.axis('off')
 
