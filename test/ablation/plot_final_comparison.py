@@ -180,23 +180,34 @@ ax.set_ylabel("Error (percentage points)")
 ax.legend(loc='upper right')
 ax.grid(True, alpha=0.3, axis='y')
 
-# --- Panel 3: Time-series at sm=40 (instantaneous throughput) ---
+# --- Panel 3: Running average throughput at sm=40 ---
 sm = 40
 ax = axes[1, 0]
-ax.set_title(f"Instantaneous Throughput at gpucores={sm} (1s window)")
-# Use latest run for time-series
+ax.set_title(f"Running Average Throughput at gpucores={sm} (3s window)")
 for name, smi_list in smi_data.items():
     run_idx = 1 if len(runs[name]) > 1 else 0
     ts_data = runs[name][run_idx][sm][0]
     base_final = runs[name][run_idx][0][1]
-    rt, rv = calc_instantaneous_util(ts_data, base_final)
-    if rt:
-        ax.plot(rt, rv, color=colors[name], alpha=0.8, linewidth=1, label=name)
-        stalls = get_stall_intervals(ts_data)
-        for j, (t0, t1) in enumerate(stalls):
-            ax.axvspan(t0, t1, alpha=0.08, color=colors[name],
-                       label='OFF interval' if j == 0 and name == "Orig + AIMD×3" else None)
-ax.axhline(sm, color='k', linestyle='--', alpha=0.5, label=f'Target {sm}%')
+    if len(ts_data) >= 2:
+        arr = np.array(ts_data)
+        times, counts = arr[:, 0], arr[:, 1]
+        baseline_rate = base_final / 30.0
+        rt, rv = [], []
+        window = 3.0
+        for i in range(len(times)):
+            t = times[i]
+            mask = (times >= t - window) & (times <= t)
+            idx = np.where(mask)[0]
+            if len(idx) >= 2:
+                dt = times[idx[-1]] - times[idx[0]]
+                dc = counts[idx[-1]] - counts[idx[0]]
+                if dt > 0.5:
+                    rt.append(t)
+                    rv.append((dc / dt) / baseline_rate * 100)
+        if rt:
+            ax.plot(rt, rv, color=colors[name], alpha=0.9, linewidth=2, label=name)
+ax.axhline(sm, color='k', linestyle='--', alpha=0.5, linewidth=2, label=f'Target {sm}%')
+ax.fill_between([0, 30], sm - 5, sm + 5, alpha=0.1, color='k', label='±5% band')
 ax.set_xlabel("Time (s)")
 ax.set_ylabel("Throughput (% of baseline)")
 ax.legend(loc='upper right', fontsize=9)
@@ -239,21 +250,26 @@ ax.legend(loc='upper right', fontsize=9)
 ax.set_ylim(0, 110)
 ax.grid(True, alpha=0.3)
 
-# --- Panel 6: Cumulative throughput ---
+# --- Panel 6: Cumulative error from ideal ---
 ax = axes[2, 1]
-ax.set_title(f"Cumulative Throughput at gpucores={sm}")
+ax.set_title(f"Cumulative Error from Target at gpucores={sm}")
+ax.axhline(0, color='k', linewidth=1, alpha=0.5)
 for name, smi_list in smi_data.items():
     run_idx = 1 if len(runs[name]) > 1 else 0
     d = runs[name][run_idx][sm]
     if d[0]:
         arr = np.array(d[0])
-        cum_pct = arr[:, 1] / baseline * 100
-        final_pct = d[1] / baseline * 100
-        ax.plot(arr[:, 0], cum_pct, color=colors[name], linewidth=2,
-                label=f'{name} ({final_pct:.1f}%)')
-ax.axhline(sm, color='k', linestyle='--', alpha=0.5)
+        times = arr[:, 0]
+        actual_pct = arr[:, 1] / baseline * 100
+        # Ideal: linear ramp to target% at t=30
+        ideal_pct = times / 30.0 * sm
+        error = actual_pct - ideal_pct
+        final_err = error[-1] if len(error) > 0 else 0
+        ax.plot(times, error, color=colors[name], linewidth=2,
+                label=f'{name} (final: {final_err:+.1f}pp)')
+ax.fill_between([0, 30], -5, 5, alpha=0.1, color='k', label='±5pp band')
 ax.set_xlabel("Time (s)")
-ax.set_ylabel("Cumulative (% of baseline)")
+ax.set_ylabel("Error from ideal (percentage points)")
 ax.legend(loc='upper left', fontsize=9)
 ax.grid(True, alpha=0.3)
 
