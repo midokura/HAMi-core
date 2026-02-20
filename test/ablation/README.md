@@ -94,7 +94,7 @@ bash test/ablation/k3s_collect.sh test 40
 
 ```bash
 # Sweep across gpucores = 0, 20, 40, 60, 80:
-bash test/ablation/k3s_sweep.sh test "0 20 40 60 80"
+for sm in 0 20 40 60 80; do bash test/ablation/k3s_collect.sh test $sm; done
 ```
 
 ### 5. Plot results
@@ -111,7 +111,6 @@ python3 test/ablation/plot_final_comparison.py
 |------|---------|
 | `build.sh` | Build `libvgpu.so` from current branch via Docker |
 | `k3s_collect.sh` | Run one gpu_burn benchmark (30s) and collect data |
-| `k3s_sweep.sh` | Sweep across multiple gpucores levels |
 | `plot_final_comparison.py` | 2-variant comparison plot (Original vs AIMD×3) |
 
 
