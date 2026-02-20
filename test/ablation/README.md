@@ -114,16 +114,6 @@ python3 test/ablation/plot_final_comparison.py
 | `k3s_sweep.sh` | Sweep across multiple gpucores levels |
 | `plot_final_comparison.py` | 2-variant comparison plot (Original vs AIMD×3) |
 
-### Ablation-only scripts (historical)
-
-These scripts were used for the 6-variant ablation study. They reference branches
-that have been deleted, but the scripts are preserved for reference.
-
-| File | Purpose |
-|------|---------|
-| `build_variants.sh` | Build all 4 ablation variant binaries |
-| `run_ablation.sh` | Run full ablation sweep with manual binary deployment |
-| `plot_ablation.py` | 6-variant ablation comparison plots |
 
 ## Results (RTX 4080 SUPER, k3s, gpu_burn 30s, 2 runs each)
 
