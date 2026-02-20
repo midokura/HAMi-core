@@ -49,70 +49,66 @@ Only `src/multiprocess/multiprocess_utilization_watcher.c` is modified:
 - `nvidia-smi` accessible on the host
 - `kubectl` configured for the cluster
 
-### 1. Build
+### Why Docker?
 
-`libvgpu.so` must be built inside Docker (Ubuntu 20.04, glibc 2.31) because it
-is injected via `LD_PRELOAD` into GPU containers that use older base images.
-Building on the host (Ubuntu 24.04, glibc 2.39) produces incompatible binaries.
+`libvgpu.so` is injected via `LD_PRELOAD` into GPU containers that use older base
+images (Ubuntu 20.04, glibc 2.31). Building on the host (Ubuntu 24.04, glibc 2.39)
+produces incompatible binaries, so the build runs inside Docker.
+
+### Quick test (single level)
 
 ```bash
-# From the libvgpu repo root:
 git checkout ablation/orig-aimd-v5
-bash test/ablation/build.sh              # → /tmp/libvgpu.so
-bash test/ablation/build.sh /tmp/my.so   # custom output path
-```
-
-### 2. Install
-
-```bash
-# Back up the current binary (first time only):
+bash test/ablation/build.sh                        # → /tmp/libvgpu.so
 sudo cp /usr/local/vgpu/libvgpu.so /usr/local/vgpu/libvgpu.so.backup
-
-# Deploy the new binary:
 sudo cp /tmp/libvgpu.so /usr/local/vgpu/libvgpu.so
-
-# Verify:
-md5sum /usr/local/vgpu/libvgpu.so
+bash test/ablation/k3s_collect.sh test 40           # gpu_burn 30s at gpucores=40
 ```
 
-No restart of the HAMi device plugin or k3s is required — `libvgpu.so` is loaded
+No restart of the HAMi device plugin or k3s is needed — `libvgpu.so` is loaded
 via `LD_PRELOAD` at container startup, so the new binary takes effect on the next
 Pod creation.
 
-### 3. Test (single level)
+### Full comparison (Original vs AIMD×3)
+
+The plot script expects data with specific labels. Follow these steps to collect
+data for both variants and generate the comparison plot.
 
 ```bash
-# Run gpu_burn for 30s at gpucores=40:
-bash test/ablation/k3s_collect.sh test 40
+# ── Step 1: Build and deploy Original (main branch) ──
+git checkout main
+bash test/ablation/build.sh /tmp/libvgpu-stock.so
+sudo cp /tmp/libvgpu-stock.so /usr/local/vgpu/libvgpu.so
 
-# Output:
-#   /tmp/gpu-bench-ts/k3s/test_sm40_gpuburn.log
-#   /tmp/gpu-bench-ts/k3s/test_sm40_smi.csv
-```
+# ── Step 2: Collect Original data (2 runs for error bars) ──
+for sm in 0 20 40 60 80; do bash test/ablation/k3s_collect.sh stock  $sm; done
+for sm in 0 20 40 60 80; do bash test/ablation/k3s_collect.sh stock2 $sm; done
 
-### 4. Test (full sweep)
+# ── Step 3: Build and deploy AIMD×3 (patched branch) ──
+git checkout ablation/orig-aimd-v5
+bash test/ablation/build.sh /tmp/libvgpu-patched.so
+sudo cp /tmp/libvgpu-patched.so /usr/local/vgpu/libvgpu.so
 
-```bash
-# Sweep across gpucores = 0, 20, 40, 60, 80:
-for sm in 0 20 40 60 80; do bash test/ablation/k3s_collect.sh test $sm; done
-```
+# ── Step 4: Collect AIMD×3 data (2 runs for error bars) ──
+for sm in 0 20 40 60 80; do bash test/ablation/k3s_collect.sh origv5  $sm; done
+for sm in 0 20 40 60 80; do bash test/ablation/k3s_collect.sh origv5b $sm; done
 
-### 5. Plot results
-
-```bash
-# Final comparison (requires both Original and AIMD×3 data):
+# ── Step 5: Generate comparison plot ──
 python3 test/ablation/plot_final_comparison.py
 # → /tmp/gpu-bench-ts/k3s_final_comparison.png
 ```
 
-## Test Scripts
+Data is saved to `/tmp/gpu-bench-ts/k3s/`. Each run produces two files:
+- `<label>_sm<N>_gpuburn.log` — gpu_burn throughput log
+- `<label>_sm<N>_smi.csv` — nvidia-smi SM utilization at 100ms intervals
+
+## Scripts
 
 | File | Purpose |
 |------|---------|
 | `build.sh` | Build `libvgpu.so` from current branch via Docker |
-| `k3s_collect.sh` | Run one gpu_burn benchmark (30s) and collect data |
-| `plot_final_comparison.py` | 2-variant comparison plot (Original vs AIMD×3) |
-
+| `k3s_collect.sh` | Run one gpu_burn benchmark (30s) and collect gpu_burn log + nvidia-smi CSV |
+| `plot_final_comparison.py` | Generate comparison plot (expects labels: `stock`, `stock2`, `origv5`, `origv5b`) |
 
 ## Results (RTX 4080 SUPER, k3s, gpu_burn 30s, 2 runs each)
 
@@ -133,22 +129,6 @@ Full 6-variant ablation was conducted to isolate the contribution of each change
 | Stock + ×3 | 21.9% | ×3 alone — no improvement |
 | **Orig + AIMD×3** | **2.3%** | **Minimal patch, sufficient** |
 | AIMD v5 (×3+NVML) | 0.9% | Full fixes, marginal improvement |
-
-## Data Format
-
-### gpu_burn log
-
-Each line contains progress percentage and cumulative proc'd count:
-```
-16.67% proc'd: 2081 (3568 Gflop/s)
-```
-
-### nvidia-smi CSV
-
-```csv
-timestamp,utilization_gpu
-1708123456.789,45
-```
 
 ## Notes
 
