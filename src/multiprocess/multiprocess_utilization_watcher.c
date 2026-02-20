@@ -203,8 +203,21 @@ void* utilization_watcher() {
           share = g_total_cuda_cores;
         }
         if ((userutil[0]<=100) && (userutil[0]>=0)){
-          share = delta(upper_limit, userutil[0], share);
-          change_token(share);
+          /* AIMD v5 with ×3 correction (no NVML fixes). */
+          long base = (long)g_sm_num * (long)g_max_thread_per_sm * 3;
+          int eff_limit = upper_limit * 7 / 8;
+          long ai_step = base * (long)eff_limit / 400;
+          if (userutil[0] <= eff_limit) {
+            int gap = upper_limit - userutil[0];
+            long step = ai_step * (long)(gap > 5 ? gap : 5) / 5;
+            share = share + step;
+          } else {
+            share = share / 3;
+          }
+          if (share < ai_step) share = ai_step;
+          long max_share = base * (long)eff_limit / 100;
+          if (share > max_share) share = max_share;
+          g_cur_cuda_cores = share;
         }
         LOG_INFO("userutil1=%d currentcores=%ld total=%ld limit=%d share=%ld\n",userutil[0],g_cur_cuda_cores,g_total_cuda_cores,upper_limit,share);
     }
