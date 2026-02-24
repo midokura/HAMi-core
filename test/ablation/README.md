@@ -62,8 +62,13 @@ git checkout ablation/orig-aimd-v5
 bash test/ablation/build.sh                        # → /tmp/libvgpu.so
 sudo cp /usr/local/vgpu/libvgpu.so /usr/local/vgpu/libvgpu.so.backup
 sudo cp /tmp/libvgpu.so /usr/local/vgpu/libvgpu.so
+bash test/ablation/k3s_collect.sh test 0            # baseline (no gpucores limit)
 bash test/ablation/k3s_collect.sh test 40           # gpu_burn 30s at gpucores=40
+python3 test/ablation/plot_single.py test 40        # → /tmp/gpu-bench-ts/k3s/test_sm40_plot.png
 ```
+
+`plot_single.py` automatically uses `test_sm0` as the baseline. You can also
+specify it manually: `python3 test/ablation/plot_single.py test 40 --baseline 12443`
 
 No restart of the HAMi device plugin or k3s is needed — `libvgpu.so` is loaded
 via `LD_PRELOAD` at container startup, so the new binary takes effect on the next
@@ -108,6 +113,7 @@ Data is saved to `/tmp/gpu-bench-ts/k3s/`. Each run produces two files:
 |------|---------|
 | `build.sh` | Build `libvgpu.so` from current branch via Docker |
 | `k3s_collect.sh` | Run one gpu_burn benchmark (30s) and collect gpu_burn log + nvidia-smi CSV |
+| `plot_single.py` | Plot a single run (`python3 plot_single.py <label> <sm>`) |
 | `plot_final_comparison.py` | Generate comparison plot (expects labels: `stock`, `stock2`, `origv5`, `origv5b`) |
 
 ## Results (RTX 4080 SUPER, k3s, gpu_burn 30s, 2 runs each)
@@ -132,7 +138,9 @@ Full 6-variant ablation was conducted to isolate the contribution of each change
 
 ## Notes
 
-- `GPU_CORE_UTILIZATION_POLICY=FORCE` must be set in the container for
-  `rate_limiter()` to activate (bypasses shared memory gate).
+- The benchmark scripts set `GPU_CORE_UTILIZATION_POLICY=FORCE` to bypass the
+  shared memory gate. In normal HAMi deployments, the device plugin sets
+  `utilization_switch` automatically when `gpucores` is configured, so `FORCE`
+  is not needed for production workloads.
 - The ×3, /400, /3 constants were tuned on RTX 4080 SUPER + gpu_burn.
   Different GPUs or workloads (e.g., vLLM) may require adjustment.
