@@ -7,8 +7,9 @@ control error from **MAE 20.7%** (stock) to **MAE 2.3%**.
 
 | Branch | Description |
 |--------|-------------|
-| `main` | Upstream HAMi-core v2.8.0 (unmodified) |
-| `ablation/orig-aimd-v5` | **Recommended**: AIMD×3 patch (15 lines changed in 1 file) |
+| `main` | Upstream HAMi-core v2.8.0 (unmodified, no test scripts) |
+| `ablation/stock` | `main` + test scripts (for benchmarking the stock controller) |
+| `ablation/orig-aimd-v5` | **Recommended**: AIMD×3 patch (15 lines changed in 1 file) + test scripts |
 
 ## What Changed
 
@@ -80,8 +81,8 @@ The plot script expects data with specific labels. Follow these steps to collect
 data for both variants and generate the comparison plot.
 
 ```bash
-# ── Step 1: Build and deploy Original (main branch) ──
-git checkout main
+# ── Step 1: Build and deploy Original ──
+git checkout ablation/stock
 bash test/ablation/build.sh /tmp/libvgpu-stock.so
 sudo cp /tmp/libvgpu-stock.so /usr/local/vgpu/libvgpu.so
 
