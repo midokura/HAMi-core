@@ -1,11 +1,19 @@
 #!/usr/bin/env python3
-"""Final comparison: Original vs Orig + AIMD×3 (2 runs each)."""
+"""Final comparison: Original vs Orig + AIMD×3 (2 runs each).
+
+Data pipeline:
+  - gpu_burn logs: cumulative proc'd count at each time point (raw from kubectl logs)
+  - nvidia-smi CSV: GPU-wide SM utilization at 100ms intervals (raw from host)
+  - Throughput = final proc'd / baseline proc'd × 100 (no windowing or smoothing)
+  - Baseline = mean of all sm=0 runs across both variants
+"""
 import matplotlib
 matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 import numpy as np
 import re
 import csv
+
 
 def parse_gpuburn_log(path):
     with open(path) as f:
@@ -16,6 +24,7 @@ def parse_gpuburn_log(path):
     results = [(float(p), int(c)) for p, c, _ in entries]
     ts_data = [(pct / 100.0 * 30.0, procd) for pct, procd in results]
     return ts_data, results[-1][1]
+
 
 def parse_smi_csv(path):
     rows = []
@@ -32,47 +41,6 @@ def parse_smi_csv(path):
     t0 = rows[0][0]
     return [(t - t0, u) for t, u in rows]
 
-def calc_instantaneous_util(ts_data, baseline_final, window=1.0):
-    if len(ts_data) < 2:
-        return [], []
-    arr = np.array(ts_data)
-    times, counts = arr[:, 0], arr[:, 1]
-    baseline_rate = baseline_final / 30.0
-    rt, rv = [], []
-    for i in range(len(times)):
-        t = times[i]
-        mask = (times >= t - window) & (times <= t)
-        idx = np.where(mask)[0]
-        if len(idx) >= 2:
-            dt = times[idx[-1]] - times[idx[0]]
-            dc = counts[idx[-1]] - counts[idx[0]]
-            if dt > 0.1:
-                rt.append(t)
-                rv.append((dc / dt) / baseline_rate * 100)
-    return rt, rv
-
-def get_stall_intervals(ts_data, min_stall_count=3):
-    if len(ts_data) < 2:
-        return []
-    intervals = []
-    prev_procd = ts_data[0][1]
-    stall_start = None
-    stall_count = 0
-    for i in range(1, len(ts_data)):
-        t, procd = ts_data[i]
-        if procd == prev_procd:
-            if stall_count == 0:
-                stall_start = ts_data[i-1][0]
-            stall_count += 1
-        else:
-            if stall_count >= min_stall_count and stall_start is not None:
-                intervals.append((stall_start, t))
-            stall_count = 0
-            stall_start = None
-        prev_procd = procd
-    if stall_count >= min_stall_count and stall_start is not None:
-        intervals.append((stall_start, ts_data[-1][0]))
-    return intervals
 
 # ============================================================
 # Load data: 2 runs each
@@ -92,12 +60,8 @@ runs = {
 }
 
 smi_data = {
-    "Original (v2.8.0)": [
-        {sm: parse_smi_csv(f"{basedir}/stock2_sm{sm}_smi.csv") for sm in levels},
-    ],
-    "Orig + AIMD×3": [
-        {sm: parse_smi_csv(f"{basedir}/origv5b_sm{sm}_smi.csv") for sm in levels},
-    ],
+    "Original (v2.8.0)": parse_smi_csv(f"{basedir}/stock2_sm40_smi.csv"),
+    "Orig + AIMD×3": parse_smi_csv(f"{basedir}/origv5b_sm40_smi.csv"),
 }
 
 colors = {"Original (v2.8.0)": "#d62728", "Orig + AIMD×3": "#1f77b4"}
@@ -131,14 +95,14 @@ for name in runs:
 # ============================================================
 # PLOT: 3×2 layout
 # ============================================================
-fig, axes = plt.subplots(4, 2, figsize=(16, 24))
+fig, axes = plt.subplots(3, 2, figsize=(16, 18))
 fig.suptitle('HAMi gpucores: Original vs AIMD×3 Patch\n'
              'k3s, gpu_burn 30s, RTX 4080 SUPER (2 runs each)',
              fontsize=14, fontweight='bold')
 
 # --- Panel 1: Sweep accuracy with error bars ---
 ax = axes[0, 0]
-ax.set_title("Throughput vs Target")
+ax.set_title("Throughput vs Target (final proc'd / baseline)")
 targets = [sm for sm in levels if sm > 0]
 ax.plot(targets, targets, 'k--', alpha=0.5, linewidth=2, label='Ideal')
 
@@ -180,69 +144,53 @@ ax.set_ylabel("Error (percentage points)")
 ax.legend(loc='upper right')
 ax.grid(True, alpha=0.3, axis='y')
 
-# --- Panel 3: Running average throughput at sm=40 ---
+# --- Panel 3: Cumulative throughput at sm=40 ---
 sm = 40
 ax = axes[1, 0]
-ax.set_title(f"Running Average Throughput at gpucores={sm} (3s window)")
-for name, smi_list in smi_data.items():
+ax.set_title(f"Cumulative Throughput at gpucores={sm} (raw proc'd)")
+
+# Use run 2 for time series (same run as smi_data)
+for name in runs:
     run_idx = 1 if len(runs[name]) > 1 else 0
-    ts_data = runs[name][run_idx][sm][0]
+    # Baseline (sm=0) as reference
+    base_ts = runs[name][run_idx][0][0]
     base_final = runs[name][run_idx][0][1]
-    if len(ts_data) >= 2:
-        arr = np.array(ts_data)
-        times, counts = arr[:, 0], arr[:, 1]
-        baseline_rate = base_final / 30.0
-        rt, rv = [], []
-        window = 3.0
-        for i in range(len(times)):
-            t = times[i]
-            mask = (times >= t - window) & (times <= t)
-            idx = np.where(mask)[0]
-            if len(idx) >= 2:
-                dt = times[idx[-1]] - times[idx[0]]
-                dc = counts[idx[-1]] - counts[idx[0]]
-                if dt > 0.5:
-                    rt.append(t)
-                    rv.append((dc / dt) / baseline_rate * 100)
-        if rt:
-            ax.plot(rt, rv, color=colors[name], alpha=0.9, linewidth=2, label=name)
-ax.axhline(sm, color='k', linestyle='--', alpha=0.5, linewidth=2, label=f'Target {sm}%')
-ax.fill_between([0, 30], sm - 5, sm + 5, alpha=0.1, color='k', label='±5% band')
+    # Test (sm=40)
+    test_ts = runs[name][run_idx][sm][0]
+    test_final = runs[name][run_idx][sm][1]
+    actual_pct = test_final / baseline * 100
+
+    if len(test_ts) >= 2:
+        tarr = np.array(test_ts)
+        ax.plot(tarr[:, 0], tarr[:, 1], color=colors[name], linewidth=2,
+                label=f'{name}: {test_final} proc\'d ({actual_pct:.1f}%)')
+
+# Ideal line: use average baseline trajectory × target%
+# Take the first available baseline time series as reference shape
+for name in runs:
+    run_idx = 1 if len(runs[name]) > 1 else 0
+    base_ts = runs[name][run_idx][0][0]
+    if len(base_ts) >= 2:
+        barr = np.array(base_ts)
+        ax.plot(barr[:, 0], barr[:, 1] * sm / 100,
+                color='#2ca02c', linestyle='--', linewidth=1.5,
+                label=f'Ideal {sm}%')
+        break  # only need one reference line
+
 ax.set_xlabel("Time (s)")
-ax.set_ylabel("Throughput (% of baseline)")
-ax.legend(loc='upper right', fontsize=9)
-ax.set_ylim(0, 120)
+ax.set_ylabel("proc'd (cumulative)")
+ax.legend(loc='upper left', fontsize=9)
 ax.grid(True, alpha=0.3)
 
-# --- Panel 4: Cumulative SM utilization ---
+# --- Panel 4: Raw nvidia-smi SM utilization at sm=40 ---
 ax = axes[1, 1]
-ax.set_title(f"Cumulative SM Utilization at gpucores={sm} (running avg)")
-for name, smi_list in smi_data.items():
-    smi = smi_list[0][sm]
+ax.set_title(f"nvidia-smi SM Utilization at gpucores={sm} (raw, 100ms)")
+for name, smi in smi_data.items():
     if smi:
         smi_arr = np.array(smi)
-        times = smi_arr[:, 0]
-        utils = smi_arr[:, 1]
-        cum_avg = np.cumsum(utils) / np.arange(1, len(utils) + 1)
-        final_avg = cum_avg[-1]
-        ax.plot(times, cum_avg, color=colors[name], linewidth=2,
-                label=f'{name} ({final_avg:.1f}%)')
-ax.axhline(sm, color='k', linestyle='--', alpha=0.5, label=f'Target {sm}%')
-ax.set_xlabel("Time (s)")
-ax.set_ylabel("SM Utilization (% running avg)")
-ax.legend(loc='upper right', fontsize=9)
-ax.set_ylim(0, 110)
-ax.grid(True, alpha=0.3)
-
-# --- Panel 5: Raw nvidia-smi SM utilization ---
-ax = axes[2, 0]
-ax.set_title(f"nvidia-smi SM Utilization at gpucores={sm}")
-for name, smi_list in smi_data.items():
-    smi = smi_list[0][sm]
-    if smi:
-        smi_arr = np.array(smi)
-        ax.plot(smi_arr[:, 0], smi_arr[:, 1], color=colors[name], alpha=0.6,
-                linewidth=0.8, label=name)
+        mask30 = smi_arr[:, 0] <= 30.0
+        ax.plot(smi_arr[mask30, 0], smi_arr[mask30, 1], color=colors[name],
+                alpha=0.6, linewidth=1.2, label=name)
 ax.axhline(sm, color='k', linestyle='--', alpha=0.5, label=f'Target {sm}%')
 ax.set_xlabel("Time (s)")
 ax.set_ylabel("SM Utilization (%)")
@@ -250,31 +198,8 @@ ax.legend(loc='upper right', fontsize=9)
 ax.set_ylim(0, 110)
 ax.grid(True, alpha=0.3)
 
-# --- Panel 6: Cumulative error from ideal ---
-ax = axes[2, 1]
-ax.set_title(f"Cumulative Error from Target at gpucores={sm}")
-ax.axhline(0, color='k', linewidth=1, alpha=0.5)
-for name, smi_list in smi_data.items():
-    run_idx = 1 if len(runs[name]) > 1 else 0
-    d = runs[name][run_idx][sm]
-    if d[0]:
-        arr = np.array(d[0])
-        times = arr[:, 0]
-        actual_pct = arr[:, 1] / baseline * 100
-        # Ideal: linear ramp to target% at t=30
-        ideal_pct = times / 30.0 * sm
-        error = actual_pct - ideal_pct
-        final_err = error[-1] if len(error) > 0 else 0
-        ax.plot(times, error, color=colors[name], linewidth=2,
-                label=f'{name} (final: {final_err:+.1f}pp)')
-ax.fill_between([0, 30], -5, 5, alpha=0.1, color='k', label='±5pp band')
-ax.set_xlabel("Time (s)")
-ax.set_ylabel("Error from ideal (percentage points)")
-ax.legend(loc='upper left', fontsize=9)
-ax.grid(True, alpha=0.3)
-
-# --- Panel 7: MAE comparison ---
-ax = axes[3, 0]
+# --- Panel 5: MAE comparison ---
+ax = axes[2, 0]
 ax.set_title("Mean Absolute Error (MAE)")
 mae_data = []
 for name in runs:
@@ -295,8 +220,8 @@ for bar, mae in zip(bars, maes):
 ax.set_xlim(0, max(maes) * 1.4)
 ax.grid(True, alpha=0.3, axis='x')
 
-# --- Panel 8: Data table ---
-ax = axes[3, 1]
+# --- Panel 6: Data table ---
+ax = axes[2, 1]
 ax.set_title("Raw Data (2 runs each)")
 ax.axis('off')
 
