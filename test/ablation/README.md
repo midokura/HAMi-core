@@ -124,19 +124,6 @@ Data is saved to `/tmp/gpu-bench-ts/k3s/`. Each run produces two files:
 | Original (v2.8.0) | 12474±35 | 40.2% | 64.7% | 83.6% | 95.2% | **20.7%** |
 | Orig + AIMD×3 | 12443±50 | 20.8% | 41.1% | 58.7% | 74.4% | **2.3%** |
 
-## Ablation Study Summary
-
-Full 6-variant ablation was conducted to isolate the contribution of each change:
-
-| Variant | MAE | Key finding |
-|---------|-----|-------------|
-| Original (v2.8.0) | 20.7% | Baseline — massive overshoot |
-| Stock + NVML fixes | 23.9% | NVML fixes alone WORSEN stock |
-| AIMD (no ×3) | 33.1% | AIMD alone — massive undershoot |
-| Stock + ×3 | 21.9% | ×3 alone — no improvement |
-| **Orig + AIMD×3** | **2.3%** | **Minimal patch, sufficient** |
-| AIMD v5 (×3+NVML) | 0.9% | Full fixes, marginal improvement |
-
 ## Notes
 
 - The benchmark scripts set `GPU_CORE_UTILIZATION_POLICY=FORCE` to bypass the
