@@ -113,9 +113,9 @@ Data is saved to `/tmp/gpu-bench-ts/k3s/`. Each run produces two files:
 Test proportional GPU sharing between concurrent pods on the same GPU.
 
 ```bash
-bash test/ablation/k3s_multi_collect.sh mp1 a:20 b:30   # 50% total
-bash test/ablation/k3s_multi_collect.sh mp2 a:40 b:40   # 80% total
-bash test/ablation/k3s_multi_collect.sh mp3 a:50 b:50   # 100% total (over-committed)
+bash test/ablation/k3s_collect.sh test 0                          # baseline (single-pod, no limit)
+bash test/ablation/k3s_multi_collect.sh mp1 a:20 b:30             # 50% total
+python3 test/ablation/plot_multi_single.py mp1 a:20 b:30          # → /tmp/gpu-bench-ts/k3s/mp1_multi_plot.png
 ```
 
 Each run creates all pods simultaneously and collects:
@@ -130,7 +130,8 @@ Each run creates all pods simultaneously and collects:
 | `build.sh` | Build `libvgpu.so` from current branch via Docker |
 | `k3s_collect.sh` | Run one single-pod gpu_burn benchmark (30s) and collect gpu_burn log + nvidia-smi CSV |
 | `k3s_multi_collect.sh` | Run multi-pod gpu_burn benchmark (30s) with per-process SM monitoring |
-| `plot_single.py` | Plot a single run (`python3 plot_single.py <label> <sm>`) |
+| `plot_single.py` | Plot a single-pod run (`python3 plot_single.py <label> <sm>`) |
+| `plot_multi_single.py` | Plot a multi-pod run (`python3 plot_multi_single.py <label> <pod:cores> ...`) |
 | `plot_final_comparison.py` | Generate comparison plot (expects labels: `stock`, `stock2`, `origv5`, `origv5b`) |
 
 ## Results (RTX 4080 SUPER, k3s, gpu_burn 30s, 2 runs each)
