@@ -15,7 +15,6 @@ import numpy as np
 import csv
 import re
 import argparse
-import sys
 
 
 def parse_gpuburn_log(path):
@@ -54,27 +53,6 @@ def running_avg(times, values, window=2.0, min_pts=5):
         if len(idx) >= min_pts:
             rv.append(np.mean(values[idx]))
             rt.append(t)
-    return rt, rv
-
-
-def running_throughput(ts_data, baseline_rate, window=3.0, skip_seconds=5.0):
-    if len(ts_data) < 2:
-        return [], []
-    arr = np.array(ts_data)
-    times, counts = arr[:, 0], arr[:, 1]
-    rt, rv = [], []
-    for i in range(len(times)):
-        t = times[i]
-        if t < skip_seconds:
-            continue
-        mask = (times >= t - window) & (times <= t)
-        idx = np.where(mask)[0]
-        if len(idx) >= 2:
-            dt = times[idx[-1]] - times[idx[0]]
-            dc = counts[idx[-1]] - counts[idx[0]]
-            if dt > 0.5:
-                rt.append(t)
-                rv.append((dc / dt) / baseline_rate * 100)
     return rt, rv
 
 
@@ -130,16 +108,6 @@ def main():
     else:
         has_baseline = True
 
-    # Compute steady-state baseline rate (excluding ramp-up outliers)
-    if baseline_ts:
-        baseline_rate_ss = steady_state_rate(baseline_ts)
-        baseline_rate_avg = baseline / 30.0
-        print(f"Baseline rate: avg={baseline_rate_avg:.0f} proc/s, "
-              f"steady-state={baseline_rate_ss:.0f} proc/s "
-              f"(ratio: {baseline_rate_ss/baseline_rate_avg:.2f}x)")
-    else:
-        baseline_rate_ss = baseline / 30.0
-
     actual_pct = final_procd / baseline * 100 if baseline > 0 else 0
     print(f"Run: {args.label} sm={args.sm}")
     print(f"Final: {final_procd} proc'd ({actual_pct:.1f}% of baseline)")
@@ -163,7 +131,7 @@ def main():
         ax.plot(times, utils, color='#999999', alpha=0.6, linewidth=1.5, label='Raw (100ms)')
         rt, rv = running_avg(times, utils)
         if rt:
-            avg_val = np.mean(utils[int(len(utils)*0.2):])  # skip ramp-up
+            avg_val = np.mean(utils[int(len(utils)*0.2):])
             ax.plot(rt, rv, color='#ff7f0e', linewidth=2,
                     label=f'Running avg 2s (steady: {avg_val:.0f}%)')
     if args.sm > 0:
@@ -211,11 +179,12 @@ def main():
         ax.set_title("Throughput (raw proc'd count)")
         if len(ts_data) >= 2:
             arr = np.array(ts_data)
-            ax.plot(arr[:, 0], arr[:, 1], color='#1f77b4', linewidth=2, label="proc'd")
-        ax.set_ylabel("proc'd count")
+            ax.plot(arr[:, 0], arr[:, 1], color='#1f77b4', linewidth=2,
+                    label=f'sm={args.sm} ({final_procd} proc\'d)')
+        ax.set_ylabel("proc'd (cumulative)")
+        ax.legend(loc='upper left', fontsize=9)
 
     ax.set_xlabel("Time (s)")
-    ax.legend(loc='upper right', fontsize=9)
     ax.grid(True, alpha=0.3)
 
     plt.tight_layout()
