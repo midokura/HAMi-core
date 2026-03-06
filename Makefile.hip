@@ -37,7 +37,7 @@ all:
 	@echo "Usage:"
 	@echo "  LD_AUDIT=$(BUILD_DIR)/libamvgpu.so \\"
 	@echo "  HIP_DEVICE_MEMORY_LIMIT_0=48G \\"
-	@echo "  ROC_GLOBAL_CU_MASK=0:0xFFFFFFFFFFFFFFFFFF \\"
+	@echo "  ROC_GLOBAL_CU_MASK=0xFFFFFFFFFFFFFFFFFF \\"
 	@echo "  ./your_app"
 
 test: all
