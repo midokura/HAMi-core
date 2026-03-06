@@ -15,34 +15,41 @@
 ROCM_HOME ?= /opt/rocm
 BUILD_DIR ?= build-hip
 BUILD_TYPE ?= Release
+# CMakeLists.txt.hip is the AMD/HIP version (CMakeLists.txt is NVIDIA/CUDA)
+CMAKE_FILE ?= CMakeLists.txt.hip
 
 .PHONY: all test clean install
 
 all:
 	@mkdir -p $(BUILD_DIR)
+	@# Copy CMakeLists.txt.hip as CMakeLists.txt into build dir with a symlink
+	@# to the source tree, so cmake picks up the HIP build instead of CUDA.
+	@ln -snf ../$(CMAKE_FILE) $(BUILD_DIR)/CMakeLists.txt
+	@ln -snf ../src $(BUILD_DIR)/src
 	cd $(BUILD_DIR) && cmake \
 		-DROCM_HOME=$(ROCM_HOME) \
 		-DCMAKE_BUILD_TYPE=$(BUILD_TYPE) \
-		-f ../CMakeLists.txt.hip \
-		..
+		.
 	cd $(BUILD_DIR) && $(MAKE)
 	@echo ""
-	@echo "Built: $(BUILD_DIR)/libamvgpu.so"
+	@echo "Built: $(BUILD_DIR)/libamvgpu.so (LD_AUDIT mode)"
 	@echo ""
 	@echo "Usage:"
-	@echo "  LD_PRELOAD=$(BUILD_DIR)/libamvgpu.so \\"
-	@echo "  HIP_DEVICE_MEMORY_LIMIT_0=48000m \\"
+	@echo "  LD_AUDIT=$(BUILD_DIR)/libamvgpu.so \\"
+	@echo "  HIP_DEVICE_MEMORY_LIMIT_0=48G \\"
 	@echo "  ROC_GLOBAL_CU_MASK=0:0xFFFFFFFFFFFFFFFFFF \\"
 	@echo "  ./your_app"
 
 test: all
 	$(ROCM_HOME)/bin/hipcc \
-		src/hip/test_memory_limit.c \
+		-D__HIP_PLATFORM_AMD__ \
+		-I$(ROCM_HOME)/include \
+		-x hip src/hip/test_memory_limit.c \
 		-o $(BUILD_DIR)/test_memory_limit \
 		-ldl
 	@echo ""
 	@echo "Run test:"
-	@echo "  LD_PRELOAD=$(BUILD_DIR)/libamvgpu.so \\"
+	@echo "  LD_AUDIT=$(BUILD_DIR)/libamvgpu.so \\"
 	@echo "  HIP_DEVICE_MEMORY_LIMIT_0=1G \\"
 	@echo "  LIBHIP_LOG_LEVEL=3 \\"
 	@echo "  $(BUILD_DIR)/test_memory_limit"

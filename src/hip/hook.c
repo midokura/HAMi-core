@@ -67,7 +67,7 @@ int hip_hook_init(void) {
     int count = 0;
 
     for (int i = 0; hip_library_entry[i].name != NULL; i++) {
-        hip_library_entry[i].fn_ptr = dlsym(RTLD_NEXT,
+        hip_library_entry[i].fn_ptr = amvgpu_real_dlsym(RTLD_NEXT,
                                              hip_library_entry[i].name);
         if (hip_library_entry[i].fn_ptr == NULL) {
             LOG_DEBUG("Could not resolve %s (may not be available)",

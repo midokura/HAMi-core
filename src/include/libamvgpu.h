@@ -66,11 +66,25 @@ typedef struct {
 /* GCC visibility for LD_PRELOAD exported symbols */
 #define FUNC_ATTR_VISIBLE __attribute__((visibility("default")))
 
-/* dlsym hook macro - find real function via dlsym */
+/* Resolve the real dlsym to avoid recursion through our dlsym hook.
+ * Must use dlvsym to get the actual glibc dlsym. */
+static inline void *amvgpu_real_dlsym(void *handle, const char *symbol) {
+    static void *(*_real_dlsym)(void *, const char *) = NULL;
+    if (!_real_dlsym) {
+        _real_dlsym = dlvsym(RTLD_DEFAULT, "dlsym", "GLIBC_2.34");
+        if (!_real_dlsym)
+            _real_dlsym = dlvsym(RTLD_DEFAULT, "dlsym", "GLIBC_2.17");
+        if (!_real_dlsym)
+            _real_dlsym = dlvsym(RTLD_DEFAULT, "dlsym", "GLIBC_2.2.5");
+    }
+    return _real_dlsym ? _real_dlsym(handle, symbol) : NULL;
+}
+
+/* dlsym hook macro - find real function via real dlsym (bypassing our hook) */
 #define REAL_FUNC(name) \
     static __typeof__(name) *real_##name = NULL; \
     if (!real_##name) { \
-        real_##name = (__typeof__(name) *)dlsym(RTLD_NEXT, #name); \
+        real_##name = (__typeof__(name) *)amvgpu_real_dlsym(RTLD_NEXT, #name); \
         if (!real_##name) { \
             LOG_ERROR("Failed to resolve real " #name); \
             return hipErrorNotInitialized; \

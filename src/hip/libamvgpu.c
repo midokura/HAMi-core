@@ -49,18 +49,21 @@
 /* Initialization state */
 static pthread_once_t init_flag = PTHREAD_ONCE_INIT;
 static int g_initialized = 0;
+static __thread int g_in_init = 0;  /* Prevent dlsym recursion */
 
 /*
  * Library initialization.
  * Called once on the first intercepted HIP call.
  */
 static void library_init(void) {
+    g_in_init = 1;
     LOG_INFO("libamvgpu initializing (pid %d)", getpid());
 
     /* Initialize shared memory region for memory tracking */
     if (hip_shrreg_init() != 0) {
         LOG_ERROR("Failed to initialize shared memory region");
         LOG_ERROR("Memory limiting will be disabled");
+        g_in_init = 0;
         return;
     }
 
@@ -71,15 +74,20 @@ static void library_init(void) {
     }
 
     g_initialized = 1;
+    g_in_init = 0;
     LOG_INFO("libamvgpu initialized: %d HIP functions hooked", resolved);
 }
 
 /*
  * Ensure library is initialized.
  * Thread-safe via pthread_once.
+ * Returns 1 if currently inside initialization (to prevent recursion).
  */
-static inline void ensure_initialized(void) {
+static inline int ensure_initialized(void) {
+    if (g_in_init)
+        return 1;  /* Recursion guard: skip hook during init */
     pthread_once(&init_flag, library_init);
+    return 0;
 }
 
 /*
@@ -87,7 +95,7 @@ static inline void ensure_initialized(void) {
  * Logs that the library was loaded but defers full initialization
  * to the first HIP call, since HIP runtime may not be ready yet.
  */
-__attribute__((constructor))
+__attribute__((constructor(65535)))
 static void on_load(void) {
     LOG_INFO("libamvgpu loaded via LD_PRELOAD (pid %d)", getpid());
 }
@@ -104,84 +112,13 @@ static void on_unload(void) {
 }
 
 /*
- * dlsym interception.
+ * Note: We do NOT intercept dlsym itself.
  *
- * When applications or frameworks (e.g., PyTorch) use dlsym to
- * look up HIP functions at runtime, we intercept and return our
- * wrapped versions instead of the real ones.
+ * LD_PRELOAD already causes our wrapper functions (hipMalloc, hipFree, etc.)
+ * to override the real HIP symbols. Frameworks like PyTorch that use
+ * dlsym(RTLD_DEFAULT, "hipMalloc") will find our wrappers automatically
+ * because LD_PRELOAD symbols take precedence.
  *
- * This is critical for frameworks that load HIP dynamically.
+ * Intercepting dlsym causes problems with HIP runtime initialization
+ * on ROCm 7.x, where the HIP runtime uses dlsym internally.
  */
-
-/* Mapping of function names to our interceptors */
-typedef struct {
-    const char *name;
-    void *wrapper;
-} hook_map_entry_t;
-
-/* Forward declarations of our wrappers (defined in memory.c) */
-extern hipError_t hipMalloc(void **, size_t);
-extern hipError_t hipFree(void *);
-extern hipError_t hipMallocManaged(void **, size_t, unsigned int);
-extern hipError_t hipMallocAsync(void **, size_t, hipStream_t);
-extern hipError_t hipFreeAsync(void *, hipStream_t);
-extern hipError_t hipHostMalloc(void **, size_t, unsigned int);
-extern hipError_t hipHostFree(void *);
-extern hipError_t hipMallocPitch(void **, size_t *, size_t, size_t);
-extern hipError_t hipExtMallocWithFlags(void **, size_t, unsigned int);
-extern hipError_t hipSetDevice(int);
-extern hipError_t hipMemGetInfo(size_t *, size_t *);
-
-static const hook_map_entry_t hook_map[] = {
-    {"hipMalloc",              (void *)hipMalloc},
-    {"hipFree",                (void *)hipFree},
-    {"hipMallocManaged",       (void *)hipMallocManaged},
-    {"hipMallocAsync",         (void *)hipMallocAsync},
-    {"hipFreeAsync",           (void *)hipFreeAsync},
-    {"hipHostMalloc",          (void *)hipHostMalloc},
-    {"hipHostFree",            (void *)hipHostFree},
-    {"hipMallocPitch",         (void *)hipMallocPitch},
-    {"hipExtMallocWithFlags",  (void *)hipExtMallocWithFlags},
-    {"hipSetDevice",           (void *)hipSetDevice},
-    {"hipMemGetInfo",          (void *)hipMemGetInfo},
-    {NULL, NULL}
-};
-
-/*
- * Intercept dlsym calls to return our wrappers for HIP functions.
- *
- * When handle is RTLD_NEXT or RTLD_DEFAULT and the symbol matches
- * a hooked function, we return our wrapper. Otherwise, we forward
- * to the real dlsym.
- */
-FUNC_ATTR_VISIBLE
-void *dlsym(void *handle, const char *symbol) {
-    /* Resolve the real dlsym using dlvsym with GLIBC version */
-    static void *(*real_dlsym)(void *, const char *) = NULL;
-    if (!real_dlsym) {
-        /* Try common GLIBC versions */
-        real_dlsym = dlvsym(RTLD_DEFAULT, "dlsym", "GLIBC_2.34");
-        if (!real_dlsym)
-            real_dlsym = dlvsym(RTLD_DEFAULT, "dlsym", "GLIBC_2.17");
-        if (!real_dlsym)
-            real_dlsym = dlvsym(RTLD_DEFAULT, "dlsym", "GLIBC_2.2.5");
-        if (!real_dlsym) {
-            fprintf(stderr,
-                    "[HAMI-core-hip] FATAL: cannot resolve real dlsym\n");
-            return NULL;
-        }
-    }
-
-    /* Check if this is a HIP function we should intercept */
-    if (handle == RTLD_NEXT || handle == RTLD_DEFAULT) {
-        for (int i = 0; hook_map[i].name != NULL; i++) {
-            if (strcmp(symbol, hook_map[i].name) == 0) {
-                ensure_initialized();
-                LOG_DEBUG("dlsym intercepted: %s", symbol);
-                return hook_map[i].wrapper;
-            }
-        }
-    }
-
-    return real_dlsym(handle, symbol);
-}

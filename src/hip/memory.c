@@ -114,7 +114,7 @@ hipError_t hipFree(void *ptr) {
     typedef hipError_t (*hipMemGetInfo_fn)(size_t *, size_t *);
     static hipMemGetInfo_fn real_hipMemGetInfo = NULL;
     if (!real_hipMemGetInfo)
-        real_hipMemGetInfo = (hipMemGetInfo_fn)dlsym(RTLD_NEXT, "hipMemGetInfo");
+        real_hipMemGetInfo = (hipMemGetInfo_fn)amvgpu_real_dlsym(RTLD_NEXT, "hipMemGetInfo");
 
     if (real_hipMemGetInfo)
         real_hipMemGetInfo(&free_before, &total);
@@ -144,7 +144,7 @@ hipError_t hipMallocManaged(void **ptr, size_t size, unsigned int flags) {
     typedef hipError_t (*fn_t)(void **, size_t, unsigned int);
     static fn_t real_fn = NULL;
     if (!real_fn)
-        real_fn = (fn_t)dlsym(RTLD_NEXT, "hipMallocManaged");
+        real_fn = (fn_t)amvgpu_real_dlsym(RTLD_NEXT, "hipMallocManaged");
     if (!real_fn)
         return hipErrorNotInitialized;
 
@@ -184,7 +184,7 @@ hipError_t hipMallocAsync(void **ptr, size_t size, hipStream_t stream) {
     typedef hipError_t (*fn_t)(void **, size_t, hipStream_t);
     static fn_t real_fn = NULL;
     if (!real_fn)
-        real_fn = (fn_t)dlsym(RTLD_NEXT, "hipMallocAsync");
+        real_fn = (fn_t)amvgpu_real_dlsym(RTLD_NEXT, "hipMallocAsync");
     if (!real_fn)
         return hipErrorNotInitialized;
 
@@ -224,7 +224,7 @@ hipError_t hipFreeAsync(void *ptr, hipStream_t stream) {
     typedef hipError_t (*fn_t)(void *, hipStream_t);
     static fn_t real_fn = NULL;
     if (!real_fn)
-        real_fn = (fn_t)dlsym(RTLD_NEXT, "hipFreeAsync");
+        real_fn = (fn_t)amvgpu_real_dlsym(RTLD_NEXT, "hipFreeAsync");
     if (!real_fn)
         return hipErrorNotInitialized;
 
@@ -245,7 +245,7 @@ hipError_t hipHostMalloc(void **ptr, size_t size, unsigned int flags) {
     typedef hipError_t (*fn_t)(void **, size_t, unsigned int);
     static fn_t real_fn = NULL;
     if (!real_fn)
-        real_fn = (fn_t)dlsym(RTLD_NEXT, "hipHostMalloc");
+        real_fn = (fn_t)amvgpu_real_dlsym(RTLD_NEXT, "hipHostMalloc");
     if (!real_fn)
         return hipErrorNotInitialized;
 
@@ -262,7 +262,7 @@ hipError_t hipHostFree(void *ptr) {
     typedef hipError_t (*fn_t)(void *);
     static fn_t real_fn = NULL;
     if (!real_fn)
-        real_fn = (fn_t)dlsym(RTLD_NEXT, "hipHostFree");
+        real_fn = (fn_t)amvgpu_real_dlsym(RTLD_NEXT, "hipHostFree");
     if (!real_fn)
         return hipErrorNotInitialized;
 
@@ -278,7 +278,7 @@ hipError_t hipMallocPitch(void **ptr, size_t *pitch,
     typedef hipError_t (*fn_t)(void **, size_t *, size_t, size_t);
     static fn_t real_fn = NULL;
     if (!real_fn)
-        real_fn = (fn_t)dlsym(RTLD_NEXT, "hipMallocPitch");
+        real_fn = (fn_t)amvgpu_real_dlsym(RTLD_NEXT, "hipMallocPitch");
     if (!real_fn)
         return hipErrorNotInitialized;
 
@@ -322,7 +322,7 @@ hipError_t hipExtMallocWithFlags(void **ptr, size_t size, unsigned int flags) {
     typedef hipError_t (*fn_t)(void **, size_t, unsigned int);
     static fn_t real_fn = NULL;
     if (!real_fn)
-        real_fn = (fn_t)dlsym(RTLD_NEXT, "hipExtMallocWithFlags");
+        real_fn = (fn_t)amvgpu_real_dlsym(RTLD_NEXT, "hipExtMallocWithFlags");
     if (!real_fn)
         return hipErrorNotInitialized;
 
@@ -361,7 +361,7 @@ hipError_t hipSetDevice(int device) {
     typedef hipError_t (*fn_t)(int);
     static fn_t real_fn = NULL;
     if (!real_fn)
-        real_fn = (fn_t)dlsym(RTLD_NEXT, "hipSetDevice");
+        real_fn = (fn_t)amvgpu_real_dlsym(RTLD_NEXT, "hipSetDevice");
     if (!real_fn)
         return hipErrorNotInitialized;
 
@@ -384,7 +384,7 @@ hipError_t hipMemGetInfo(size_t *free_mem, size_t *total_mem) {
     typedef hipError_t (*fn_t)(size_t *, size_t *);
     static fn_t real_fn = NULL;
     if (!real_fn)
-        real_fn = (fn_t)dlsym(RTLD_NEXT, "hipMemGetInfo");
+        real_fn = (fn_t)amvgpu_real_dlsym(RTLD_NEXT, "hipMemGetInfo");
     if (!real_fn)
         return hipErrorNotInitialized;
 

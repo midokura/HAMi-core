@@ -33,7 +33,7 @@ message(STATUS "ROCM_HOME: ${ROCM_HOME}")
 
 # Compiler settings
 set(CMAKE_C_STANDARD 11)
-set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -fPIC -D_GNU_SOURCE -Wall -Wextra -Wno-unused-parameter")
+set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -fPIC -D_GNU_SOURCE -std=gnu11 -Wall -Wextra -Wno-unused-parameter")
 
 if(CMAKE_BUILD_TYPE STREQUAL "Release")
     set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -O2 -fvisibility=hidden")
@@ -52,8 +52,14 @@ if(GIT_HASH)
     add_definitions(-DGIT_HASH="${GIT_HASH}")
 endif()
 
-# Source files
-set(LIBAMVGPU_SOURCES
+# LD_AUDIT version (default, works on ROCm 7.x)
+set(LIBAMVGPU_AUDIT_SOURCES
+    src/hip/libamvgpu_audit.c
+    src/multiprocess/hip_multiprocess_memory_limit.c
+)
+
+# Legacy LD_PRELOAD version (broken on ROCm 7.x, kept for reference)
+set(LIBAMVGPU_PRELOAD_SOURCES
     src/hip/libamvgpu.c
     src/hip/hook.c
     src/hip/memory.c
@@ -68,21 +74,23 @@ set(LIBAMVGPU_INCLUDES
     ${ROCM_HOME}/include/hip
 )
 
-# Shared library target
-add_library(amvgpu SHARED ${LIBAMVGPU_SOURCES})
+# --- LD_AUDIT target (primary) ---
+add_library(amvgpu SHARED ${LIBAMVGPU_AUDIT_SOURCES})
 target_include_directories(amvgpu PRIVATE ${LIBAMVGPU_INCLUDES})
-
-# Link against dl and pthread (NOT hip - we use dlsym to find HIP at runtime)
-target_link_libraries(amvgpu
-    dl
-    pthread
-)
-
-# Symbol visibility: export only our interceptors
+target_link_libraries(amvgpu dl pthread)
 set_target_properties(amvgpu PROPERTIES
     OUTPUT_NAME "amvgpu"
     VERSION 1.0.0
     SOVERSION 1
+)
+
+# --- Legacy LD_PRELOAD target (optional) ---
+add_library(amvgpu_preload SHARED ${LIBAMVGPU_PRELOAD_SOURCES})
+target_include_directories(amvgpu_preload PRIVATE ${LIBAMVGPU_INCLUDES})
+target_link_libraries(amvgpu_preload dl pthread)
+set_target_properties(amvgpu_preload PROPERTIES
+    OUTPUT_NAME "amvgpu_preload"
+    EXCLUDE_FROM_ALL TRUE
 )
 
 # Strip local symbols in release builds

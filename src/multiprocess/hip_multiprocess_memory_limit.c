@@ -29,6 +29,7 @@
 #define _GNU_SOURCE
 #endif
 
+#include "../include/glibc_compat.h"
 #include "hip_multiprocess_memory_limit.h"
 #include "../include/hip_log_utils.h"
 #include "../include/libamvgpu.h"
