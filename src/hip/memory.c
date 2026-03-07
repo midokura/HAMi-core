@@ -28,6 +28,25 @@
 #include <pthread.h>
 #include <string.h>
 
+#include "alloc_tracker.h"
+
+/* Pointer-to-size allocation tracker */
+static alloc_tracker_t g_alloc_tracker;
+static int g_tracker_initialized = 0;
+static pthread_mutex_t g_tracker_mutex = PTHREAD_MUTEX_INITIALIZER;
+
+static inline alloc_tracker_t *get_tracker(void) {
+    if (!g_tracker_initialized) {
+        pthread_mutex_lock(&g_tracker_mutex);
+        if (!g_tracker_initialized) {
+            alloc_tracker_init(&g_alloc_tracker);
+            g_tracker_initialized = 1;
+        }
+        pthread_mutex_unlock(&g_tracker_mutex);
+    }
+    return &g_alloc_tracker;
+}
+
 /* Current device index for this thread */
 static __thread int current_device = 0;
 
@@ -80,6 +99,9 @@ hipError_t hipMalloc(void **ptr, size_t size) {
             hip_add_device_memory_usage(dev, size, MEM_TYPE_DATA);
             hip_shrreg_unlock();
         }
+        pthread_mutex_lock(&g_tracker_mutex);
+        alloc_tracker_insert(get_tracker(), *ptr, size, dev);
+        pthread_mutex_unlock(&g_tracker_mutex);
         LOG_DEBUG("hipMalloc: %zu bytes -> %p (dev %d)", size, *ptr, dev);
     }
 
@@ -89,13 +111,8 @@ hipError_t hipMalloc(void **ptr, size_t size) {
 /*
  * hipFree - Device memory deallocation.
  *
- * Note: We cannot determine the exact allocation size from the pointer
- * alone, as HIP doesn't provide hipMemGetSize or equivalent.
- * In a production implementation, we would maintain a hash map of
- * (pointer -> size) in the shared region. For now, we query hipMemGetInfo
- * before and after to compute the delta.
- *
- * TODO: Implement pointer-to-size tracking hash map for accuracy.
+ * Uses pointer-to-size tracking hash table to determine the exact
+ * allocation size, avoiding the inaccurate hipMemGetInfo delta method.
  */
 FUNC_ATTR_VISIBLE
 hipError_t hipFree(void *ptr) {
@@ -108,29 +125,22 @@ hipError_t hipFree(void *ptr) {
         return real_hipFree(ptr);
 
     int dev = current_device;
-    size_t free_before = 0, total = 0, free_after = 0;
+    int alloc_dev = dev;
 
-    /* Get free memory before deallocation */
-    typedef hipError_t (*hipMemGetInfo_fn)(size_t *, size_t *);
-    static hipMemGetInfo_fn real_hipMemGetInfo = NULL;
-    if (!real_hipMemGetInfo)
-        real_hipMemGetInfo = (hipMemGetInfo_fn)amvgpu_real_dlsym(RTLD_NEXT, "hipMemGetInfo");
-
-    if (real_hipMemGetInfo)
-        real_hipMemGetInfo(&free_before, &total);
+    pthread_mutex_lock(&g_tracker_mutex);
+    size_t tracked_size = alloc_tracker_remove(get_tracker(), ptr, &alloc_dev);
+    pthread_mutex_unlock(&g_tracker_mutex);
 
     hipError_t ret = real_hipFree(ptr);
 
-    if (ret == hipSuccess && real_hipMemGetInfo) {
-        real_hipMemGetInfo(&free_after, &total);
-        if (free_after > free_before) {
-            size_t freed = free_after - free_before;
-            if (hip_shrreg_lock() == 0) {
-                hip_rm_device_memory_usage(dev, freed, MEM_TYPE_DATA);
-                hip_shrreg_unlock();
-            }
-            LOG_DEBUG("hipFree: %p freed %zu bytes (dev %d)", ptr, freed, dev);
+    if (ret == hipSuccess && tracked_size > 0) {
+        if (hip_shrreg_lock() == 0) {
+            hip_rm_device_memory_usage(alloc_dev, tracked_size, MEM_TYPE_DATA);
+            hip_shrreg_unlock();
         }
+        LOG_DEBUG("hipFree: %p freed %zu bytes (dev %d, tracked)", ptr, tracked_size, alloc_dev);
+    } else if (ret == hipSuccess && tracked_size == 0) {
+        LOG_WARN("hipFree: %p not found in tracker (dev %d)", ptr, dev);
     }
 
     return ret;
@@ -170,6 +180,9 @@ hipError_t hipMallocManaged(void **ptr, size_t size, unsigned int flags) {
             hip_add_device_memory_usage(dev, size, MEM_TYPE_DATA);
             hip_shrreg_unlock();
         }
+        pthread_mutex_lock(&g_tracker_mutex);
+        alloc_tracker_insert(get_tracker(), *ptr, size, dev);
+        pthread_mutex_unlock(&g_tracker_mutex);
         LOG_DEBUG("hipMallocManaged: %zu bytes -> %p (dev %d)", size, *ptr, dev);
     }
 
@@ -210,6 +223,9 @@ hipError_t hipMallocAsync(void **ptr, size_t size, hipStream_t stream) {
             hip_add_device_memory_usage(dev, size, MEM_TYPE_DATA);
             hip_shrreg_unlock();
         }
+        pthread_mutex_lock(&g_tracker_mutex);
+        alloc_tracker_insert(get_tracker(), *ptr, size, dev);
+        pthread_mutex_unlock(&g_tracker_mutex);
         LOG_DEBUG("hipMallocAsync: %zu bytes (dev %d)", size, dev);
     }
 
@@ -231,9 +247,25 @@ hipError_t hipFreeAsync(void *ptr, hipStream_t stream) {
     if (ptr == NULL)
         return real_fn(ptr, stream);
 
-    /* Async free - we cannot easily determine freed size here.
-     * Memory tracking will be corrected at next allocation check. */
-    return real_fn(ptr, stream);
+    if (hip_get_device_memory_limit(current_device) == 0)
+        return real_fn(ptr, stream);
+
+    int alloc_dev = current_device;
+    pthread_mutex_lock(&g_tracker_mutex);
+    size_t tracked_size = alloc_tracker_remove(get_tracker(), ptr, &alloc_dev);
+    pthread_mutex_unlock(&g_tracker_mutex);
+
+    hipError_t ret = real_fn(ptr, stream);
+
+    if (ret == hipSuccess && tracked_size > 0) {
+        if (hip_shrreg_lock() == 0) {
+            hip_rm_device_memory_usage(alloc_dev, tracked_size, MEM_TYPE_DATA);
+            hip_shrreg_unlock();
+        }
+        LOG_DEBUG("hipFreeAsync: %p freed %zu bytes (dev %d, tracked)", ptr, tracked_size, alloc_dev);
+    }
+
+    return ret;
 }
 
 /*
@@ -307,6 +339,9 @@ hipError_t hipMallocPitch(void **ptr, size_t *pitch,
             hip_add_device_memory_usage(dev, actual, MEM_TYPE_DATA);
             hip_shrreg_unlock();
         }
+        pthread_mutex_lock(&g_tracker_mutex);
+        alloc_tracker_insert(get_tracker(), *ptr, actual, dev);
+        pthread_mutex_unlock(&g_tracker_mutex);
         LOG_DEBUG("hipMallocPitch: %zux%zu (pitch=%zu, total=%zu) dev %d",
                   width, height, *pitch, actual, dev);
     }
@@ -348,6 +383,9 @@ hipError_t hipExtMallocWithFlags(void **ptr, size_t size, unsigned int flags) {
             hip_add_device_memory_usage(dev, size, MEM_TYPE_DATA);
             hip_shrreg_unlock();
         }
+        pthread_mutex_lock(&g_tracker_mutex);
+        alloc_tracker_insert(get_tracker(), *ptr, size, dev);
+        pthread_mutex_unlock(&g_tracker_mutex);
     }
 
     return ret;
