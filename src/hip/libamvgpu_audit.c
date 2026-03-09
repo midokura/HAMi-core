@@ -80,19 +80,34 @@ static __thread int current_device = 0;
 /* Shared region initialization state */
 static int g_shrreg_ready = 0;
 
-/* Pointer-to-size allocation tracker */
+/* Pointer-to-size allocation tracker.
+ *
+ * We use a GCC atomic spinlock instead of pthread_mutex because
+ * LD_AUDIT's la_symbind64 intercepts ALL symbol bindings.  When
+ * pthread_mutex_lock is lazily resolved via PLT, the dynamic linker
+ * re-enters la_symbind64 while holding its internal lock, causing
+ * deadlock.  Atomic builtins are compiler intrinsics with no PLT. */
 static alloc_tracker_t g_alloc_tracker;
-static int g_tracker_initialized = 0;
-static pthread_mutex_t g_tracker_mutex = PTHREAD_MUTEX_INITIALIZER;
+static volatile int g_tracker_initialized = 0;
+static volatile int g_tracker_spinlock = 0;
 
+static inline void tracker_lock(void) {
+    while (__sync_lock_test_and_set(&g_tracker_spinlock, 1)) {
+        while (g_tracker_spinlock)
+            __builtin_ia32_pause();
+    }
+}
+
+static inline void tracker_unlock(void) {
+    __sync_lock_release(&g_tracker_spinlock);
+}
+
+/* Must be called under tracker_lock() or during single-threaded init */
 static inline alloc_tracker_t *get_tracker(void) {
     if (!g_tracker_initialized) {
-        pthread_mutex_lock(&g_tracker_mutex);
-        if (!g_tracker_initialized) {
-            alloc_tracker_init(&g_alloc_tracker);
-            g_tracker_initialized = 1;
-        }
-        pthread_mutex_unlock(&g_tracker_mutex);
+        alloc_tracker_init(&g_alloc_tracker);
+        __sync_synchronize();
+        g_tracker_initialized = 1;
     }
     return &g_alloc_tracker;
 }
@@ -144,9 +159,9 @@ static hipError_t wrap_hipMalloc(void **ptr, size_t size) {
             hip_add_device_memory_usage(dev, size, MEM_TYPE_DATA);
             hip_shrreg_unlock();
         }
-        pthread_mutex_lock(&g_tracker_mutex);
+        tracker_lock();
         alloc_tracker_insert(get_tracker(), *ptr, size, dev);
-        pthread_mutex_unlock(&g_tracker_mutex);
+        tracker_unlock();
         LOG_DEBUG("hipMalloc: %zu bytes -> %p (dev %d)", size, *ptr, dev);
     }
 
@@ -164,9 +179,9 @@ static hipError_t wrap_hipFree(void *ptr) {
 
     /* Look up exact allocation size from tracker */
     int alloc_dev = dev;
-    pthread_mutex_lock(&g_tracker_mutex);
+    tracker_lock();
     size_t tracked_size = alloc_tracker_remove(get_tracker(), ptr, &alloc_dev);
-    pthread_mutex_unlock(&g_tracker_mutex);
+    tracker_unlock();
 
     hipError_t ret = real_hipFree(ptr);
 
@@ -245,9 +260,9 @@ static hipError_t wrap_hipMallocManaged(void **ptr, size_t size,
             hip_add_device_memory_usage(dev, size, MEM_TYPE_DATA);
             hip_shrreg_unlock();
         }
-        pthread_mutex_lock(&g_tracker_mutex);
+        tracker_lock();
         alloc_tracker_insert(get_tracker(), *ptr, size, dev);
-        pthread_mutex_unlock(&g_tracker_mutex);
+        tracker_unlock();
         LOG_DEBUG("hipMallocManaged: %zu bytes -> %p (dev %d)", size, *ptr, dev);
     }
 
@@ -281,9 +296,9 @@ static hipError_t wrap_hipMallocAsync(void **ptr, size_t size,
             hip_add_device_memory_usage(dev, size, MEM_TYPE_DATA);
             hip_shrreg_unlock();
         }
-        pthread_mutex_lock(&g_tracker_mutex);
+        tracker_lock();
         alloc_tracker_insert(get_tracker(), *ptr, size, dev);
-        pthread_mutex_unlock(&g_tracker_mutex);
+        tracker_unlock();
         LOG_DEBUG("hipMallocAsync: %zu bytes (dev %d)", size, dev);
     }
 
@@ -300,9 +315,9 @@ static hipError_t wrap_hipFreeAsync(void *ptr, hipStream_t stream) {
 
     /* Look up size before async free */
     int alloc_dev = dev;
-    pthread_mutex_lock(&g_tracker_mutex);
+    tracker_lock();
     size_t tracked_size = alloc_tracker_remove(get_tracker(), ptr, &alloc_dev);
-    pthread_mutex_unlock(&g_tracker_mutex);
+    tracker_unlock();
 
     hipError_t ret = real_hipFreeAsync(ptr, stream);
 
@@ -347,9 +362,9 @@ static hipError_t wrap_hipMallocPitch(void **ptr, size_t *pitch,
             hip_add_device_memory_usage(dev, actual, MEM_TYPE_DATA);
             hip_shrreg_unlock();
         }
-        pthread_mutex_lock(&g_tracker_mutex);
+        tracker_lock();
         alloc_tracker_insert(get_tracker(), *ptr, actual, dev);
-        pthread_mutex_unlock(&g_tracker_mutex);
+        tracker_unlock();
         LOG_DEBUG("hipMallocPitch: %zux%zu (pitch=%zu, total=%zu) dev %d",
                   width, height, *pitch, actual, dev);
     }
@@ -384,9 +399,9 @@ static hipError_t wrap_hipExtMallocWithFlags(void **ptr, size_t size,
             hip_add_device_memory_usage(dev, size, MEM_TYPE_DATA);
             hip_shrreg_unlock();
         }
-        pthread_mutex_lock(&g_tracker_mutex);
+        tracker_lock();
         alloc_tracker_insert(get_tracker(), *ptr, size, dev);
-        pthread_mutex_unlock(&g_tracker_mutex);
+        tracker_unlock();
     }
 
     return ret;
