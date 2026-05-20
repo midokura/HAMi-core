@@ -223,23 +223,25 @@ Each run creates all pods simultaneously and collects:
 | Original (v2.8.0) | 12474±35 | 40.2% | 64.7% | 83.6% | 95.2% | **20.7%** |
 | Orig + AIMD×3 | 12443±50 | 20.8% | 41.1% | 58.7% | 74.4% | **2.3%** |
 
-### RTX 4080 (re-measured 2026-05-19, throughput basis)
+### RTX 4080 (re-measured 2026-05-20, throughput basis)
+
+Raw artifacts: [`data/20260520-RTX4080/`](data/20260520-RTX4080/) (40 log/csv files + plot + env.md).
 
 | Variant | sm=0 (proc'd) | sm=20 | sm=40 | sm=60 | sm=80 | MAE |
 |---------|---------------|-------|-------|-------|-------|-----|
-| Original (v2.8.0) | 37184 ± 1494 | 33.7% | 64.2% | 79.2% | 89.5% | **16.6%** |
-| Orig + AIMD×3 | 38097 ± 581 | 17.4% | 37.5% | 54.7% | 74.1% | **4.1%** |
+| Original (v2.8.0) | 38263 ± 415  | 36.9% | 64.7% | 80.2% | 88.1% | **17.5%** |
+| Orig + AIMD×3     | 37682 ± 1328 | 18.8% | 38.9% | 57.7% | 73.2% | **2.8%**  |
 
 ### RTX 4080, SM-utilization basis (`nvidia-smi`, steady-window mean)
 
 | Variant | sm=20 util | sm=40 util | sm=60 util | sm=80 util | MAE |
 |---------|------------|------------|------------|------------|-----|
-| Original (v2.8.0) | 31.4% | 59.3% | 77.3% | 88.9% | **14.2%** |
-| Orig + AIMD×3 | 16.3% | 32.7% | 49.0% | 69.5% | **8.1%** |
+| Original (v2.8.0) | 34.8% | 60.5% | 81.9% | 87.1% | **16.1%** |
+| Orig + AIMD×3     | 18.2% | 35.1% | 53.3% | 70.0% | **5.9%**  |
 
-On RTX 4080 the patch still cuts throughput-MAE by ~4× (16.6 % → 4.1 %), but
-does not reach the SUPER result. AIMD now slightly under-shoots at higher `sm`,
-suggesting the multiplier and AI step need GPU-specific re-tuning.
+On RTX 4080 the patch cuts throughput-MAE by ~6× (17.5 % → 2.8 %), nearly
+matching the SUPER result of 2.3 %. AIMD slightly under-shoots at higher `sm`
+(sm=80 → 73 %), so the multiplier could still be tuned for this GPU.
 
 ## Notes
 
